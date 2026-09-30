@@ -1,6 +1,9 @@
 name: Update GitHub Stats
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     - cron: "17 4 1 * *"
   workflow_dispatch:
