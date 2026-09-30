@@ -6,7 +6,7 @@ on:
       - main
 
   schedule:
-    - cron: "17 4 4 * *"
+    - cron: "0 4 1 * *"
 
   workflow_dispatch:
 
@@ -25,7 +25,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_USERNAME: ViridianAStar
-        run: python .github/generate_stats.py
+        run: python generate_stats.py
 
       - name: Commit stats
         run: |
