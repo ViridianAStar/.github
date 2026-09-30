@@ -27,7 +27,7 @@ jobs:
           GH_USERNAME: ViridianAStar
         run: |
           mkdir -p assets
-          python generate_stats.py
+          python .github/generatestats.py
 
       - name: Commit stats
         run: |
