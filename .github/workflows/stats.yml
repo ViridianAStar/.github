@@ -25,7 +25,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_USERNAME: ViridianAStar
-        run: python generate_stats.py
+        run: |
+          mkdir -p assets
+          python generate_stats.py
 
       - name: Commit stats
         run: |
