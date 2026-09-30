@@ -13,4 +13,9 @@ I'm a developer who enjoys building things, learning how they work, and occasion
 
 ## GitHub
 
-<p align="center"> <img src="https://github-readme-stats.vercel.app/api?username=ViridianAStar&show_icons=true&include_all_commits=true&hide_border=true&theme=transparent" height="165" /> <img src="https://github-readme-stats.vercel.app/api/top-langs/?username=ViridianAStar&layout=compact&langs_count=8&hide_border=true&theme=transparent" height="165" /> </p>
+<p align="center">
+  <img
+    src="./assets/github-stats.svg"
+    alt="GitHub statistics for ViridianAStar"
+  />
+</p>
