@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
-import json
 import os
-import shutil
 import subprocess
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
+
+# ============================================================
+# Configuration
+# ============================================================
 
 USERNAME = os.environ["GH_USERNAME"]
 TOKEN = os.environ["GH_TOKEN"]
@@ -16,6 +19,10 @@ TOKEN = os.environ["GH_TOKEN"]
 API = "https://api.github.com"
 API_VERSION = "2026-03-10"
 
+
+# ============================================================
+# GitHub API
+# ============================================================
 
 def github_request(url):
     request = urllib.request.Request(
@@ -28,21 +35,56 @@ def github_request(url):
         },
     )
 
-    with urllib.request.urlopen(request) as response:
-        return json.load(response)
+    try:
+        with urllib.request.urlopen(request) as response:
+            return __import__("json").load(response)
+
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+
+        raise RuntimeError(
+            f"GitHub API returned HTTP {error.code} for {url}\n"
+            f"{body}"
+        ) from error
 
 
-def get_all_public_repositories():
+# ============================================================
+# Repository discovery
+# ============================================================
+
+def get_all_accessible_public_repositories():
+    """
+    Get public repositories that the authenticated user can access.
+
+    This includes:
+      - repositories owned by the user
+      - repositories where the user is a collaborator
+      - repositories accessible through organization membership
+
+    Private repositories are explicitly excluded.
+    Forks are also excluded.
+    """
+
     repositories = []
     page = 1
 
+    print("Finding public repositories you can access...")
+
     while True:
-        url = (
-            f"{API}/users/{USERNAME}/repos?"
-            f"type=owner&"
-            f"per_page=100&"
-            f"page={page}"
+        query = urllib.parse.urlencode(
+            {
+                "visibility": "public",
+                "affiliation": (
+                    "owner,"
+                    "collaborator,"
+                    "organization_member"
+                ),
+                "per_page": 100,
+                "page": page,
+            }
         )
+
+        url = f"{API}/user/repos?{query}"
 
         data = github_request(url)
 
@@ -51,18 +93,44 @@ def get_all_public_repositories():
 
         repositories.extend(data)
 
+        print(
+            f"  API page {page}: "
+            f"{len(data)} repositories"
+        )
+
         if len(data) < 100:
             break
 
         page += 1
 
-    return [
+    # Deduplicate by repository ID.
+    unique = {}
+
+    for repo in repositories:
+        unique[repo["id"]] = repo
+
+    repositories = list(unique.values())
+
+    # Public + non-fork only.
+    repositories = [
         repo
         for repo in repositories
-        if not repo["fork"] and not repo["private"]
+        if not repo["private"]
+        and not repo["fork"]
+        and not repo["archived"]
+        and not repo["disabled"]
     ]
 
+    repositories.sort(
+        key=lambda repo: repo["full_name"].lower()
+    )
 
+    return repositories
+
+
+# ============================================================
+# Git helpers
+# ============================================================
 
 def run_git(args, cwd):
     result = subprocess.run(
@@ -78,7 +146,12 @@ def run_git(args, cwd):
 
 
 def clone_repository(repo, destination):
-    clone_url = repo["clone_url"]
+    """
+    Mirror-clone the repository.
+
+    --mirror fetches all refs, including branches, rather than
+    just the default branch.
+    """
 
     subprocess.run(
         [
@@ -86,21 +159,21 @@ def clone_repository(repo, destination):
             "clone",
             "--mirror",
             "--quiet",
-            clone_url,
+            repo["clone_url"],
             str(destination),
         ],
         check=True,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
     )
 
 
-def get_branch_commits(repo_path):
+def get_all_branch_commits(repo_path):
     """
-    Return every unique commit reachable from every branch.
+    Return unique commits reachable from every branch.
 
-    Because commits are identified by SHA, a commit shared by multiple
-    branches is counted only once.
+    A commit shared by multiple branches is counted only once.
     """
 
     output = run_git(
@@ -111,31 +184,28 @@ def get_branch_commits(repo_path):
         repo_path,
     )
 
-    return set(
+    return {
         sha.strip()
         for sha in output.splitlines()
         if sha.strip()
-    )
+    }
 
 
-def get_commit_stats(repo_path, sha):
+def get_repository_line_stats(repo_path):
     """
-    Get additions/deletions for a commit.
+    Calculate additions/deletions across all branch history.
 
-    --numstat gives:
-        additions deletions filename
-
-    Binary files are represented with '- -', which we ignore because
-    they do not have meaningful line additions/deletions.
+    We process the entire history in one Git invocation rather
+    than running `git show` separately for every commit.
     """
 
     output = run_git(
         [
-            "show",
+            "log",
+            "--all",
             "--numstat",
-            "--format=",
+            "--format=%H",
             "--no-renames",
-            sha,
         ],
         repo_path,
     )
@@ -144,13 +214,15 @@ def get_commit_stats(repo_path, sha):
     deletions = 0
 
     for line in output.splitlines():
+
         parts = line.split("\t")
 
-        if len(parts) < 3:
+        if len(parts) != 3:
             continue
 
-        added, deleted = parts[0], parts[1]
+        added, deleted, _filename = parts
 
+        # Binary files are represented by '-'.
         if added.isdigit():
             additions += int(added)
 
@@ -160,150 +232,21 @@ def get_commit_stats(repo_path, sha):
     return additions, deletions
 
 
+# ============================================================
+# GitHub language statistics
+# ============================================================
+
 def get_languages(repo):
     """
-    GitHub's language endpoint returns byte counts for the repository.
+    GitHub reports language usage as bytes of source code.
     """
 
-    url = repo["languages_url"]
-    data = github_request(url)
-
-    return data
+    return github_request(repo["languages_url"])
 
 
-def escape_xml(value):
-    return (
-        str(value)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&apos;")
-    )
-
-
-def format_number(number):
-    return f"{number:,}"
-
-
-print("Finding public repositories...")
-
-repositories = get_all_public_repositories()
-
-print(f"Found {len(repositories)} public repositories.")
-
-
-total_commits = 0
-total_additions = 0
-total_deletions = 0
-
-all_languages = {}
-
-with tempfile.TemporaryDirectory() as temp_dir:
-
-    temp_path = Path(temp_dir)
-
-    for index, repo in enumerate(repositories, start=1):
-
-        name = repo["full_name"]
-
-        print(
-            f"[{index}/{len(repositories)}] "
-            f"Processing {name}"
-        )
-
-        repo_path = temp_path / repo["name"]
-
-        try:
-            clone_repository(
-                repo,
-                repo_path,
-            )
-
-        except subprocess.CalledProcessError:
-            print(
-                f"  Failed to clone {name}; skipping."
-            )
-            continue
-
-        # ------------------------------------------------------
-        # ALL BRANCH COMMITS
-        # ------------------------------------------------------
-
-        try:
-            commits = get_branch_commits(repo_path)
-
-        except subprocess.CalledProcessError:
-            print(
-                f"  Failed to enumerate commits; skipping."
-            )
-            continue
-
-        print(
-            f"  {len(commits):,} unique branch commits"
-        )
-
-        total_commits += len(commits)
-
-        # ------------------------------------------------------
-        # ADDITIONS / DELETIONS
-        # ------------------------------------------------------
-
-        for commit_index, sha in enumerate(
-            commits,
-            start=1,
-        ):
-
-            try:
-                additions, deletions = get_commit_stats(
-                    repo_path,
-                    sha,
-                )
-
-                total_additions += additions
-                total_deletions += deletions
-
-            except subprocess.CalledProcessError:
-                print(
-                    f"  Failed to inspect commit {sha}; skipping."
-                )
-
-        # ------------------------------------------------------
-        # LANGUAGES
-        # ------------------------------------------------------
-
-        try:
-            languages = get_languages(repo)
-
-            for language, bytes_count in languages.items():
-
-                if language not in all_languages:
-                    all_languages[language] = 0
-
-                all_languages[language] += bytes_count
-
-        except Exception:
-            print(
-                f"  Failed to retrieve languages for {name}."
-            )
-
-
-# --------------------------------------------------------------
-# LANGUAGE PROCESSING
-# --------------------------------------------------------------
-
-total_language_bytes = sum(
-    all_languages.values()
-)
-
-top_languages = sorted(
-    all_languages.items(),
-    key=lambda item: item[1],
-    reverse=True,
-)[:6]
-
-
-# GitHub language colors.
+# ============================================================
+# Language colors
+# ============================================================
 
 LANGUAGE_COLORS = {
     "C++": "#f34b7d",
@@ -322,19 +265,204 @@ LANGUAGE_COLORS = {
     "Kotlin": "#A97BFF",
     "Swift": "#F05138",
     "Lua": "#000080",
+    "Ruby": "#701516",
+    "PHP": "#4F5D95",
+    "Dart": "#00B4AB",
+    "R": "#198CE7",
+    "Makefile": "#427819",
 }
 
 
-def language_color(name):
+def language_color(language):
     return LANGUAGE_COLORS.get(
-        name,
+        language,
         "#8b949e",
     )
 
 
-# --------------------------------------------------------------
-# LANGUAGE ROWS
-# --------------------------------------------------------------
+# ============================================================
+# Formatting
+# ============================================================
+
+def format_number(value):
+    return f"{value:,}"
+
+
+def xml_escape(value):
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+# ============================================================
+# Main statistics collection
+# ============================================================
+
+repositories = get_all_accessible_public_repositories()
+
+print()
+print(
+    f"Found {len(repositories)} "
+    f"public repositories."
+)
+print()
+
+total_commits = 0
+total_additions = 0
+total_deletions = 0
+
+all_languages = {}
+
+
+with tempfile.TemporaryDirectory() as temporary_directory:
+
+    temporary_directory = Path(
+        temporary_directory
+    )
+
+    for index, repo in enumerate(
+        repositories,
+        start=1,
+    ):
+
+        full_name = repo["full_name"]
+
+        print(
+            f"[{index}/{len(repositories)}] "
+            f"{full_name}"
+        )
+
+        repo_path = (
+            temporary_directory
+            / f"repo-{repo['id']}"
+        )
+
+        # ----------------------------------------------------
+        # Clone
+        # ----------------------------------------------------
+
+        try:
+            clone_repository(
+                repo,
+                repo_path,
+            )
+
+        except subprocess.CalledProcessError as error:
+
+            print(
+                "  WARNING: clone failed; skipping."
+            )
+
+            if error.stderr:
+                print(
+                    error.stderr[-1000:]
+                )
+
+            continue
+
+        # ----------------------------------------------------
+        # Commits
+        # ----------------------------------------------------
+
+        try:
+
+            commits = get_all_branch_commits(
+                repo_path
+            )
+
+            commit_count = len(commits)
+
+            total_commits += commit_count
+
+            print(
+                f"  Commits: {commit_count:,}"
+            )
+
+        except subprocess.CalledProcessError:
+
+            print(
+                "  WARNING: could not enumerate commits."
+            )
+
+        # ----------------------------------------------------
+        # Additions / deletions
+        # ----------------------------------------------------
+
+        try:
+
+            additions, deletions = (
+                get_repository_line_stats(
+                    repo_path
+                )
+            )
+
+            total_additions += additions
+            total_deletions += deletions
+
+            print(
+                f"  Lines: "
+                f"+{additions:,} "
+                f"-{deletions:,}"
+            )
+
+        except subprocess.CalledProcessError:
+
+            print(
+                "  WARNING: could not calculate "
+                "line statistics."
+            )
+
+        # ----------------------------------------------------
+        # Languages
+        # ----------------------------------------------------
+
+        try:
+
+            languages = get_languages(repo)
+
+            for language, byte_count in (
+                languages.items()
+            ):
+
+                all_languages[language] = (
+                    all_languages.get(
+                        language,
+                        0,
+                    )
+                    + byte_count
+                )
+
+        except Exception as error:
+
+            print(
+                f"  WARNING: language lookup failed: "
+                f"{error}"
+            )
+
+
+# ============================================================
+# Language processing
+# ============================================================
+
+total_language_bytes = sum(
+    all_languages.values()
+)
+
+top_languages = sorted(
+    all_languages.items(),
+    key=lambda item: item[1],
+    reverse=True,
+)[:8]
+
+
+# ============================================================
+# Generate language rows
+# ============================================================
 
 language_rows = []
 
@@ -348,9 +476,7 @@ for index, (language, byte_count) in enumerate(
         else 0
     )
 
-    y = 350 + index * 28
-
-    color = language_color(language)
+    y = 360 + index * 25
 
     language_rows.append(
         f"""
@@ -358,7 +484,7 @@ for index, (language, byte_count) in enumerate(
             cx="35"
             cy="{y - 5}"
             r="5"
-            fill="{color}"
+            fill="{language_color(language)}"
         />
 
         <text
@@ -366,7 +492,7 @@ for index, (language, byte_count) in enumerate(
             y="{y}"
             class="label"
         >
-            {escape_xml(language)}
+            {xml_escape(language)}
         </text>
 
         <text
@@ -381,15 +507,15 @@ for index, (language, byte_count) in enumerate(
     )
 
 
-# --------------------------------------------------------------
-# SVG
-# --------------------------------------------------------------
+# ============================================================
+# Generate SVG
+# ============================================================
 
 svg = f"""<svg
 xmlns="http://www.w3.org/2000/svg"
 width="760"
-height="540"
-viewBox="0 0 760 540">
+height="590"
+viewBox="0 0 760 590">
 
 <style>
 
@@ -459,7 +585,7 @@ viewBox="0 0 760 540">
 
 <rect
     width="760"
-    height="540"
+    height="590"
     rx="12"
     fill="#0d1117"
 />
@@ -468,7 +594,7 @@ viewBox="0 0 760 540">
 
 <text
     x="30"
-    y="38"
+    y="40"
     class="title"
 >
     GitHub Activity
@@ -476,17 +602,19 @@ viewBox="0 0 760 540">
 
 <text
     x="30"
-    y="60"
+    y="62"
     class="subtitle"
 >
-    @{escape_xml(USERNAME)} · public repositories
+    @{xml_escape(USERNAME)} · public repositories
+    you can access
 </text>
 
-<!-- All-time statistics -->
+
+<!-- Main statistics -->
 
 <text
     x="30"
-    y="98"
+    y="105"
     class="number"
 >
     {format_number(total_commits)}
@@ -494,15 +622,16 @@ viewBox="0 0 760 540">
 
 <text
     x="30"
-    y="116"
+    y="123"
     class="stat"
 >
     COMMITS
 </text>
 
+
 <text
     x="180"
-    y="98"
+    y="105"
     class="number"
 >
     +{format_number(total_additions)}
@@ -510,57 +639,63 @@ viewBox="0 0 760 540">
 
 <text
     x="180"
-    y="116"
+    y="123"
     class="stat"
 >
     ADDITIONS
 </text>
 
+
 <text
-    x="360"
-    y="98"
+    x="365"
+    y="105"
     class="number"
 >
     -{format_number(total_deletions)}
 </text>
 
 <text
-    x="360"
-    y="116"
+    x="365"
+    y="123"
     class="stat"
 >
     DELETIONS
 </text>
 
+
 <text
-    x="540"
-    y="98"
+    x="555"
+    y="105"
     class="number"
 >
     {format_number(len(repositories))}
 </text>
 
 <text
-    x="540"
-    y="116"
+    x="555"
+    y="123"
     class="stat"
 >
     REPOSITORIES
 </text>
 
-<!-- Languages -->
+
+<!-- Divider -->
 
 <line
     x1="30"
-    y1="145"
+    y1="150"
     x2="730"
-    y2="145"
+    y2="150"
     stroke="#21262d"
 />
 
+
+<!-- Languages -->
+
 <text
     x="30"
-    y="178"
+    y="185"
     class="title"
 >
     Languages
@@ -568,17 +703,40 @@ viewBox="0 0 760 540">
 
 <text
     x="30"
-    y="200"
+    y="207"
     class="subtitle"
 >
-    Combined across public repositories
+    Combined across accessible public repositories
 </text>
 
 {''.join(language_rows)}
 
+
+<!-- Footer -->
+
+<line
+    x1="30"
+    y1="555"
+    x2="730"
+    y2="555"
+    stroke="#21262d"
+/>
+
+<text
+    x="30"
+    y="578"
+    class="subtitle"
+>
+    All branches · unique commits · public repositories only
+</text>
+
 </svg>
 """
 
+
+# ============================================================
+# Write output
+# ============================================================
 
 output = Path(
     "assets/github-stats.svg"
@@ -594,12 +752,25 @@ output.write_text(
     encoding="utf-8",
 )
 
+
+# ============================================================
+# Console summary
+# ============================================================
+
 print()
-print("=" * 60)
+print("=" * 64)
 print("GitHub statistics generated")
-print("=" * 60)
-print(f"Repositories : {len(repositories):,}")
-print(f"Commits      : {total_commits:,}")
-print(f"Additions    : {total_additions:,}")
-print(f"Deletions    : {total_deletions:,}")
-print("=" * 60)
+print("=" * 64)
+print(
+    f"Repositories : {len(repositories):,}"
+)
+print(
+    f"Commits      : {total_commits:,}"
+)
+print(
+    f"Additions    : +{total_additions:,}"
+)
+print(
+    f"Deletions    : -{total_deletions:,}"
+)
+print("=" * 64)

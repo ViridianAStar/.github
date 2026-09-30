@@ -6,12 +6,16 @@ on:
       - main
 
   schedule:
-    - cron: "0 4 1 * *"
+    - cron: "17 4 1 * *"
 
   workflow_dispatch:
 
 permissions:
   contents: write
+
+env:
+  GH_TOKEN: ${{ secrets.GH_STATS_TOKEN }}
+  GH_USERNAME: ViridianAStar
 
 jobs:
   update-stats:
@@ -22,9 +26,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Generate stats
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_USERNAME: ViridianAStar
         run: |
           mkdir -p assets
           python .github/generatestats.py
