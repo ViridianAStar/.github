@@ -38,9 +38,8 @@ def get_all_public_repositories():
 
     while True:
         url = (
-            f"{API}/user/repos?"
-            f"visibility=public&"
-            f"affiliation=owner&"
+            f"{API}/users/{USERNAME}/repos?"
+            f"type=owner&"
             f"per_page=100&"
             f"page={page}"
         )
@@ -57,12 +56,12 @@ def get_all_public_repositories():
 
         page += 1
 
-    # Ignore forks.
     return [
         repo
         for repo in repositories
-        if not repo["fork"]
+        if not repo["fork"] and not repo["private"]
     ]
+
 
 
 def run_git(args, cwd):
