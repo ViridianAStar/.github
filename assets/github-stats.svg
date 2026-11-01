@@ -104,7 +104,7 @@ viewBox="0 0 760 590">
     y="105"
     class="number"
 >
-    193
+    196
 </text>
 
 <text
@@ -121,7 +121,7 @@ viewBox="0 0 760 590">
     y="105"
     class="number"
 >
-    +175,733
+    +180,031
 </text>
 
 <text
@@ -138,7 +138,7 @@ viewBox="0 0 760 590">
     y="105"
     class="number"
 >
-    -133,240
+    -133,344
 </text>
 
 <text
@@ -155,7 +155,7 @@ viewBox="0 0 760 590">
     y="105"
     class="number"
 >
-    8
+    9
 </text>
 
 <text
@@ -218,7 +218,7 @@ viewBox="0 0 760 590">
             text-anchor="end"
             class="value"
         >
-            67.2%
+            65.9%
         </text>
         
         <circle
@@ -242,7 +242,7 @@ viewBox="0 0 760 590">
             text-anchor="end"
             class="value"
         >
-            18.6%
+            18.2%
         </text>
         
         <circle
@@ -266,7 +266,7 @@ viewBox="0 0 760 590">
             text-anchor="end"
             class="value"
         >
-            6.3%
+            6.1%
         </text>
         
         <circle
@@ -290,43 +290,19 @@ viewBox="0 0 760 590">
             text-anchor="end"
             class="value"
         >
-            6.0%
+            5.9%
         </text>
         
         <circle
             cx="35"
             cy="455"
             r="5"
-            fill="#427819"
-        />
-
-        <text
-            x="50"
-            y="460"
-            class="label"
-        >
-            Makefile
-        </text>
-
-        <text
-            x="500"
-            y="460"
-            text-anchor="end"
-            class="value"
-        >
-            0.7%
-        </text>
-        
-        <circle
-            cx="35"
-            cy="480"
-            r="5"
             fill="#563d7c"
         />
 
         <text
             x="50"
-            y="485"
+            y="460"
             class="label"
         >
             CSS
@@ -334,18 +310,42 @@ viewBox="0 0 760 590">
 
         <text
             x="500"
+            y="460"
+            text-anchor="end"
+            class="value"
+        >
+            1.6%
+        </text>
+        
+        <circle
+            cx="35"
+            cy="480"
+            r="5"
+            fill="#f1e05a"
+        />
+
+        <text
+            x="50"
+            y="485"
+            class="label"
+        >
+            JavaScript
+        </text>
+
+        <text
+            x="500"
             y="485"
             text-anchor="end"
             class="value"
         >
-            0.6%
+            1.5%
         </text>
         
         <circle
             cx="35"
             cy="505"
             r="5"
-            fill="#f1e05a"
+            fill="#427819"
         />
 
         <text
@@ -353,7 +353,7 @@ viewBox="0 0 760 590">
             y="510"
             class="label"
         >
-            JavaScript
+            Makefile
         </text>
 
         <text
@@ -362,7 +362,7 @@ viewBox="0 0 760 590">
             text-anchor="end"
             class="value"
         >
-            0.5%
+            0.7%
         </text>
         
         <circle
